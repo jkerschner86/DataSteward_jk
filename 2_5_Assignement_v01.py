@@ -2,110 +2,99 @@ import requests
 import json
 import matplotlib.pyplot as plt
 
-# --- 1. DATA ACQUISITION ---
-def fetch_all_phaidra_data(filename="phaidra_audit.json"):
+# --- 1. DATA ACQUISITION & STORAGE ---
+def fetch_and_save_data(filename="phaidra_data.json"):
     """
-    Fetches all records with a broad field list to ensure format data is captured.
-    Interface: filename (str) - path for local data storage.
+    Fetches object metadata from Phaidra for 2023-2024 and saves it to a file.
+    Interface: filename (str) - where to save the raw data.
     """
+    # Phaidra REST API search endpoint (example URL structure)
     base_url = "https://phaidra.ustp.at/api/search/select"
-    all_docs = []
-    start = 0
-    rows_per_page = 100 
+    
+    # Query for objects created in 2023 and 2024
+    # Using Solr-style query parameters typically used by Phaidra/Fedora
+    params = {
+        'q': 'created:[2023-01-01T00:00:00Z TO 2024-12-31T23:59:59Z]',
+        'wt': 'json',
+        'rows': 100  # Limited for the assignment scope
+    }
     
     try:
-        # Requesting multiple format-related fields: file_mimetype, dc_format, resourcetype
-        query_params = {
-            'q': 'created:[2023-01-01T00:00:00Z TO 2024-12-31T23:59:59Z]',
-            'fl': 'pid,dc_license,file_mimetype,dc_format,resourcetype', 
-            'wt': 'json',
-            'rows': 0
-        }
-        
-        response = requests.get(base_url, params=query_params, timeout=10)
+        response = requests.get(base_url, params=params, timeout=10)
         response.raise_for_status()
-        total_found = response.json().get('response', {}).get('numFound', 0)
+        data = response.json()
         
-        print(f"DEBUG: Found {total_found} total records. Downloading...")
-
-        while start < total_found:
-            query_params.update({'start': start, 'rows': rows_per_page})
-            page_res = requests.get(base_url, params=query_params, timeout=15)
-            page_res.raise_for_status()
-            
-            docs = page_res.json().get('response', {}).get('docs', [])
-            all_docs.extend(docs)
-            start += rows_per_page
-            print(f"Harvested: {len(all_docs)} / {total_found}")
-
-        # Requirement: Write data to a file 
+        # Write data to a file (Requirement: Read/Write from a file)
         with open(filename, 'w', encoding='utf-8') as f:
-            json.dump({"response": {"docs": all_docs}}, f)
+            json.dump(data, f)
+        print(f"Successfully saved API data to {filename}")
         return True
-
     except Exception as e:
-        print(f"CRITICAL ERROR during acquisition: {e}")
+        print(f"Error during acquisition: {e}")
         return False
 
-# --- 2. DATA ANALYSIS ---
-def analyze_data(filename="phaidra_audit.json"):
+# --- 2. PROCESSING & ANALYSIS ---
+def analyze_resource_types(filename="phaidra_data.json"):
     """
-    Requirement: Function with an interface.
-    Processes data using a fallback logic to identify the correct MIME type.
+    Reads the local file and performs statistics on resource types.
     """
-    # Requirement: Read data from a file 
-    with open(filename, 'r', encoding='utf-8') as f:
-        content = json.load(f)
+    # Requirement: Read data from a file
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            content = json.load(f)
+    except FileNotFoundError:
+        return {}
+
+    # Requirement: Use at least one array/dictionary
+    type_counts = {}
     
+    # Requirement: Use at least one loop
+    # Accessing the list of docs (objects) from the Phaidra response
     docs = content.get('response', {}).get('docs', [])
-    stats = {} # Requirement: Use an array/dictionary 
-
-    # Requirement: Use at least one loop 
+    
     for item in docs:
-        # FALLBACK LOGIC: Try different fields if 'file_mimetype' is empty
-        # Requirement: At least one decision used 
-        raw_mime = item.get('file_mimetype') or item.get('dc_format') or item.get('resourcetype') or 'unknown'
-        lic = item.get('dc_license', 'All Rights Reserved')
+        # Extract the resource type (e.g., 'picture', 'video', 'text')
+        res_type = item.get('resourcetype', 'unknown')
         
-        # Clean potential list formats (addressing the 'unhashable type' error)
-        mime = raw_mime[0] if isinstance(raw_mime, list) and raw_mime else raw_mime
-        lic = lic[0] if isinstance(lic, list) and lic else lic
-
-        if mime not in stats:
-            stats[mime] = {}
-        
-        stats[mime][lic] = stats[mime].get(lic, 0) + 1
+        # Requirement: Use at least one decision
+        if res_type in type_counts:
+            type_counts[res_type] += 1
+        else:
+            type_counts[res_type] = 1
             
-    return stats
+    return type_counts
 
 # --- 3. VISUALIZATION ---
-def plot_stats(stats_map):
+def create_statistics_diagram(stats_dict):
     """
     Requirement: Make at least one diagram.
     """
-    if not stats_map:
+    if not stats_dict:
+        print("No data available to plot.")
         return
 
-    labels = list(stats_map.keys())
-    values = [sum(l.values()) for l in stats_map.values()]
+    labels = list(stats_dict.keys())
+    values = list(stats_dict.values())
 
     plt.figure(figsize=(10, 6))
     plt.bar(labels, values, color='skyblue')
-    plt.title('Phaidra Repository Distribution (2023-2024)')
+    plt.xlabel('Resource Type')
     plt.ylabel('Number of Objects')
-    plt.xticks(rotation=45, ha='right')
+    plt.title('Phaidra Repository Statistics (2023-2024)')
+    plt.xticks(rotation=45)
     plt.tight_layout()
     
-    plt.savefig('phaidra_audit_chart.png')
+    # Save and show the diagram
+    plt.savefig('phaidra_stats_2023_2024.png')
     plt.show()
 
+# --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    # Implementation following the Waterfall Model [cite: 4]
-    if fetch_all_phaidra_data():
-        final_stats = analyze_data()
+    # 1. Acquisition
+    if fetch_and_save_data():
+        # 2. Analysis
+        stats = analyze_resource_types()
+        print("Analysis Results:", stats)
         
-        print("\n--- FINAL AUDIT RESULTS ---")
-        for m, lics in final_stats.items():
-            print(f"Type: {m:25} | Records: {sum(lics.values())}")
-            
-        plot_stats(final_stats)
+        # 3. Visualization
+        create_statistics_diagram(stats)
